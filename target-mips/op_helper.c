@@ -884,9 +884,7 @@ target_ulong helper_mfhc0_maar(CPUMIPSState *env)
     }
 
     if (env->CP0_MAARI < MIPS_MAAR_MAX) {
-        if (env->CP0_PageGrain & (1 << CP0PG_ELPA)) {
-            return env->CP0_MAAR[env->CP0_MAARI] >> 32;
-        }
+        return env->CP0_MAAR[env->CP0_MAARI] >> 32;
     }
     return 0;
 }
@@ -1619,7 +1617,7 @@ void helper_mthc0_maar(CPUMIPSState *env, target_ulong arg1)
     }
 
     if (env->CP0_MAARI < MIPS_MAAR_MAX) {
-        env->CP0_MAAR[env->CP0_MAARI] = (arg1 & (env->PAMask >> 36)) |
+        env->CP0_MAAR[env->CP0_MAARI] = ((uint64_t) arg1 << 32) |
                 (env->CP0_MAAR[env->CP0_MAARI] & 0x00000000ffffffffULL);
     }
 }
