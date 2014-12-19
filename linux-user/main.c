@@ -3417,6 +3417,10 @@ void stop_all_tasks(void)
      */
     start_exclusive();
 }
+void resume_all_tasks(void)
+{
+    end_exclusive();
+}
 
 /* Assumes contents are already zeroed.  */
 void init_task_state(TaskState *ts)
@@ -4310,6 +4314,25 @@ int main(int argc, char **argv, char **envp)
 #elif defined(TARGET_MIPS)
     {
         int i;
+        struct mode_req {
+            bool single;
+            bool soft;
+            bool fr1;
+            bool frdefault;
+            bool fre;
+        };
+        struct mode_req reqs[8] = { { true,  true,  true,  true,  true },
+                                    { false, false, false, true,  true },
+                                    { true,  false, false, false, false },
+                                    { false, true,  false, false, false },
+                                    { false, false, false, false, false },
+                                    { false, false, true,  true,  true },
+                                    { false, false, true,  false, false },
+                                    { false, false, true,  false, true } };
+        struct mode_req none_req = { true,  true,  false, true,  true };
+
+        struct mode_req prog_req;
+        struct mode_req interp_req;
 
         for(i = 0; i < 32; i++) {
             env->active_tc.gpr[i] = regs->regs[i];
@@ -4317,6 +4340,60 @@ int main(int argc, char **argv, char **envp)
         env->active_tc.PC = regs->cp0_epc & ~(target_ulong)1;
         if (regs->cp0_epc & 1) {
             env->hflags |= MIPS_HFLAG_M16;
+        }
+
+#ifdef TARGET_ABI_MIPSO32
+# define MAX_FP_ABI Val_GNU_MIPS_ABI_FP_64A
+#else
+# define MAX_FP_ABI Val_GNU_MIPS_ABI_FP_SOFT
+#endif
+
+        if ((info->fp_abi > Val_GNU_MIPS_ABI_FP_64A && info->fp_abi != -1)
+            || (info->interp_fp_abi > Val_GNU_MIPS_ABI_FP_64A
+                && info->interp_fp_abi != -1)) {
+            fprintf(stderr, "qemu: Program and interpreter have "
+                            "unexpected FPU modes\n");
+            exit(137);
+        }
+        prog_req = (info->fp_abi == -1) ? none_req : reqs[info->fp_abi];
+        interp_req = (info->interp_fp_abi == -1) ? none_req
+                                                 : reqs[info->interp_fp_abi];
+
+        prog_req.single &= interp_req.single;
+        prog_req.soft &= interp_req.soft;
+        prog_req.fr1 &= interp_req.fr1;
+        prog_req.frdefault &= interp_req.frdefault;
+        prog_req.fre &= interp_req.fre;
+
+        if (prog_req.fr1 || prog_req.frdefault || prog_req.fre) {
+#ifdef TARGET_ABI_MIPSO32
+            if (!prog_req.frdefault) {
+                if ((env->CP0_Config1 & (1 << CP0C1_FP)) &&
+                    (env->CP0_Status_rw_bitmask & (1 << CP0St_FR))) {
+                    env->CP0_Status |= (1 << CP0St_FR);
+                    compute_hflags(env);
+                } else if ((env->CP0_Status & (1 << CP0St_FR)) == 0) {
+                    fprintf(stderr, "qemu: Program needs 64-bit floating-point "
+                                    "registers\n");
+                    exit(137);
+                }
+            }
+            if ((prog_req.fre && !prog_req.frdefault && !prog_req.fr1)
+                || (prog_req.frdefault && !prog_req.fr1
+                    && (env->insn_flags & ISA_MIPS32R6))) {
+                if (env->CP0_Config5_rw_bitmask & (1 << CP0C5_FRE)) {
+                    env->CP0_Config5 |= (1 << CP0C5_FRE);
+                    compute_hflags(env);
+                } else if ((env->CP0_Config5 & (1 << CP0C5_FRE)) == 0) {
+                    fprintf(stderr, "qemu: Program requires FRE mode\n");
+                    exit(137);
+                }
+            }
+#endif
+        } else if (!prog_req.single && !prog_req.soft) {
+            fprintf(stderr, "qemu: Program and interpreter require "
+                            "conflicting FP ABIs\n");
+            exit(137);
         }
     }
 #elif defined(TARGET_OPENRISC)

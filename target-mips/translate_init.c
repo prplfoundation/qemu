@@ -768,12 +768,6 @@ static void mvp_init (CPUMIPSState *env, const mips_def_t *def)
 
 static void msa_reset(CPUMIPSState *env)
 {
-#ifdef CONFIG_USER_ONLY
-    /* MSA access enabled */
-    env->CP0_Config5 |= 1 << CP0C5_MSAEn;
-    env->CP0_Status |= (1 << CP0St_CU1) | (1 << CP0St_FR);
-#endif
-
     /* MSA CSR:
        - non-signaling floating point exception mode off (NX bit is 0)
        - Cause, Enables, and Flags are all 0

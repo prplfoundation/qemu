@@ -937,6 +937,30 @@ static void elf_core_copy_regs(target_elf_gregset_t *regs, const CPUMIPSState *e
 #define USE_ELF_CORE_DUMP
 #define ELF_EXEC_PAGESIZE        4096
 
+typedef struct {
+    /* Version of flags structure.  */
+    uint16_t version;
+    /* The level of the ISA: 1-5, 32, 64.  */
+    uint8_t isa_level;
+    /* The revision of ISA: 0 for MIPS V and below, 1-n otherwise.  */
+    uint8_t isa_rev;
+    /* The size of general purpose registers.  */
+    uint8_t gpr_size;
+    /* The size of co-processor 1 registers.  */
+    uint8_t cpr1_size;
+    /* The size of co-processor 2 registers.  */
+    uint8_t cpr2_size;
+    /* The floating-point ABI.  */
+    uint8_t fp_abi;
+    /* Mask of processor-specific extensions.  */
+    uint32_t isa_ext;
+    /* Mask of ASEs used.  */
+    uint32_t ases;
+    /* Mask of general flags.  */
+    uint32_t flags1;
+    uint32_t flags2;
+} Elf_ABIFlags_v0;
+
 #endif /* TARGET_MIPS */
 
 #ifdef TARGET_MICROBLAZE
@@ -1291,11 +1315,25 @@ static void bswap_sym(struct elf_sym *sym)
     bswaptls(&sym->st_size);
     bswap16s(&sym->st_shndx);
 }
+
+#ifdef TARGET_MIPS
+static void bswap_mips_abiflags(Elf_ABIFlags_v0 *abiflags)
+{
+    bswap16s(&abiflags->version);
+    bswap32s(&abiflags->ases);
+    bswap32s(&abiflags->isa_ext);
+    bswap32s(&abiflags->flags1);
+    bswap32s(&abiflags->flags2);
+}
+#endif
 #else
 static inline void bswap_ehdr(struct elfhdr *ehdr) { }
 static inline void bswap_phdr(struct elf_phdr *phdr, int phnum) { }
 static inline void bswap_shdr(struct elf_shdr *shdr, int shnum) { }
 static inline void bswap_sym(struct elf_sym *sym) { }
+#ifdef TARGET_MIPS
+static inline void bswap_mips_abiflags(Elf_ABIFlags_v0 *abiflags) { }
+#endif
 #endif
 
 #ifdef USE_ELF_CORE_DUMP
@@ -1885,6 +1923,9 @@ static void load_elf_image(const char *image_name, int image_fd,
     info->end_data = 0;
     info->brk = 0;
     info->elf_flags = ehdr->e_flags;
+#ifdef TARGET_MIPS
+    info->fp_abi = -1;
+#endif
 
     for (i = 0; i < ehdr->e_phnum; i++) {
         struct elf_phdr *eppnt = phdr + i;
@@ -1962,8 +2003,31 @@ static void load_elf_image(const char *image_name, int image_fd,
                 goto exit_errmsg;
             }
             *pinterp_name = interp_name;
+#ifdef TARGET_MIPS
+        } else if (eppnt->p_type == PT_MIPS_ABIFLAGS) {
+            Elf_ABIFlags_v0 abiflags;
+            if (eppnt->p_filesz < sizeof(Elf_ABIFlags_v0)) {
+                errmsg = "Invalid PT_MIPS_ABIFLAGS entry";
+                goto exit_errmsg;
+            }
+            if (eppnt->p_offset + eppnt->p_filesz <= BPRM_BUF_SIZE) {
+                memcpy(&abiflags, bprm_buf + eppnt->p_offset,
+                       sizeof(Elf_ABIFlags_v0));
+            } else {
+                retval = pread(image_fd, &abiflags, sizeof(Elf_ABIFlags_v0),
+                               eppnt->p_offset);
+                if (retval != sizeof(Elf_ABIFlags_v0)) {
+                    goto exit_perror;
+                }
+            }
+            bswap_mips_abiflags (&abiflags);
+            info->fp_abi = abiflags.fp_abi;
+#endif
         }
     }
+#ifdef TARGET_MIPS
+    info->interp_fp_abi = info->fp_abi;
+#endif
 
     if (info->end_data == 0) {
         info->start_data = info->end_code;
@@ -1987,7 +2051,7 @@ static void load_elf_image(const char *image_name, int image_fd,
     errmsg = strerror(errno);
  exit_errmsg:
     fprintf(stderr, "%s: %s\n", image_name, errmsg);
-    exit(-1);
+    exit(137);
 }
 
 static void load_elf_interp(const char *filename, struct image_info *info,
@@ -2207,6 +2271,9 @@ int load_elf_binary(struct linux_binprm *bprm, struct image_info *info)
             target_mmap(0, qemu_host_page_size, PROT_READ | PROT_EXEC,
                         MAP_FIXED | MAP_PRIVATE, -1, 0);
         }
+#ifdef TARGET_MIPS
+        info->interp_fp_abi = interp_info.fp_abi;
+#endif
     }
 
     bprm->p = create_elf_tables(bprm->p, bprm->argc, bprm->envc, &elf_ex,
