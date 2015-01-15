@@ -582,6 +582,15 @@ struct CPUMIPSState {
     const mips_def_t *cpu_model;
     void *irq[8];
     QEMUTimer *timer; /* Internal timer */
+
+    /* Processor state after the last instruction.
+     * Used for instruction tracing. */
+    target_ulong last_gpr[32];
+    target_ulong last_HI[MIPS_DSP_ACC];
+    target_ulong last_LO[MIPS_DSP_ACC];
+    target_ulong last_DSPControl;
+    target_ulong last_cop0[32*8];
+    const char *last_mode;
 };
 
 #include "cpu-qom.h"
