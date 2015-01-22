@@ -137,8 +137,6 @@ static int uart_can_receive(void *opaque)
     uart_t *u = opaque;
     pic32_t *s = u->mcu;        /* used in VALUE() */
 
-//printf("--- %s(%p) called\n", __func__, u);
-
     if (! (VALUE(u->mode) & PIC32_UMODE_ON) ||
         ! (VALUE(u->sta) & PIC32_USTA_URXEN)) {
         /* UART disabled. */
@@ -160,7 +158,6 @@ static void uart_receive(void *opaque, const uint8_t *buf, int size)
     uart_t *u = opaque;
     pic32_t *s = u->mcu;        /* used in VALUE() */
 
-//printf("--- %s(%p) called\n", __func__, u);
     if (! (VALUE(u->mode) & PIC32_UMODE_ON) ||
         ! (VALUE(u->sta) & PIC32_USTA_URXEN)) {
         /* UART disabled. */
@@ -187,13 +184,12 @@ static void uart_timeout(void *opaque)
     uart_t *u = opaque;
     pic32_t *s = u->mcu;        /* used in VALUE() */
 
-//printf("--- %s() called\n", __func__);
     if (u->oactive) {
         /* Activate transmit interrupt. */
-//printf("uart%u: raise tx irq %u\n", unit, u->irq + UART_IRQ_TX);
         if ((VALUE(u->mode) & PIC32_UMODE_ON) &&
             (VALUE(u->sta) & PIC32_USTA_UTXEN))
             s->irq_raise (s, u->irq + UART_IRQ_TX);
+
         VALUE(u->sta) &= ~PIC32_USTA_UTXBF;
         VALUE(u->sta) |= PIC32_USTA_TRMT;
         u->oactive = 0;

@@ -23,6 +23,7 @@
  */
 
 /* Only 32-bit little endian mode supported. */
+#include "config.h"
 #if !defined TARGET_MIPS64 && !defined TARGET_WORDS_BIGENDIAN
 
 #include "hw/i386/pc.h"
@@ -222,9 +223,7 @@ static void update_irq_status(pic32_t *s)
             }
         }
         VALUE(INTSTAT) = vector | (cause_ripl << 8);
-//printf ("-- vector = %d, level = %d\n", vector, level);
     }
-//else printf ("-- no irq pending\n");
 
     if (cause_ripl == current_ripl)
         return;
@@ -248,7 +247,7 @@ static void irq_raise (pic32_t *s, int irq)
 {
     if (VALUE(IFS(irq >> 5)) & (1 << (irq & 31)))
         return;
-//printf ("-- %s() irq = %d\n", __func__, irq);
+
     VALUE(IFS(irq >> 5)) |= 1 << (irq & 31);
     update_irq_status(s);
 }
@@ -260,7 +259,7 @@ static void irq_clear (pic32_t *s, int irq)
 {
     if (! (VALUE(IFS(irq >> 5)) & (1 << (irq & 31))))
         return;
-//printf ("-- %s() irq = %d\n", __func__, irq);
+
     VALUE(IFS(irq >> 5)) &= ~(1 << (irq & 31));
     update_irq_status(s);
 }
@@ -1281,7 +1280,7 @@ static void main_cpu_reset(void *opaque)
 
     cpu_reset(CPU(cpu));
 
-    /* Adjust the initial configuration for microAptivP core. */
+    /* Adjust the initial configuration for M4K core. */
     env->CP0_IntCtl = 0;
     env->CP0_Debug = (1 << CP0DB_CNT) | (3 << CP0DB_VER);
     for (i=0; i<7; i++)
