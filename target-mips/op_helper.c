@@ -1940,6 +1940,45 @@ target_ulong helper_evpe(CPUMIPSState *env)
     }
     return prev;
 }
+
+target_ulong helper_dvp(CPUMIPSState *env)
+{
+    CPUState *other_cs = first_cpu;
+    target_ulong prev = env->CP0_VPControl;
+
+    if (!((env->CP0_VPControl >> CP0VPCtl_DIS) &1)) {
+        CPU_FOREACH(other_cs) {
+            MIPSCPU *other_cpu = MIPS_CPU(other_cs);
+            /* Turn off all VPs except the one executing the dvp.  */
+            if (&other_cpu->env != env) {
+                mips_vpe_sleep(other_cpu);
+            }
+        }
+        env->CP0_VPControl |= (1 << CP0VPCtl_DIS);
+    }
+    return prev;
+}
+
+target_ulong helper_evp(CPUMIPSState *env)
+{
+    CPUState *other_cs = first_cpu;
+    target_ulong prev = env->CP0_VPControl;
+
+    if (((env->CP0_VPControl >> CP0VPCtl_DIS) &1)) {
+        CPU_FOREACH(other_cs) {
+            MIPSCPU *other_cpu = MIPS_CPU(other_cs);
+
+            if (&other_cpu->env != env
+                /* If the VP is WFI, don't disturb its sleep.  */
+                && !mips_vpe_is_wfi(other_cpu)) {
+                /* Enable the VP.  */
+                mips_vpe_wake(other_cpu); /* And wake it up.  */
+            }
+        }
+        env->CP0_VPControl &= ~(1 << CP0VPCtl_DIS);
+    }
+    return prev;
+}
 #endif /* !CONFIG_USER_ONLY */
 
 void helper_fork(target_ulong arg1, target_ulong arg2)
