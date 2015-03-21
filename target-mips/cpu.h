@@ -387,6 +387,7 @@ struct CPUMIPSState {
 #define CP0C0_M    31
 #define CP0C0_K23  28
 #define CP0C0_KU   25
+#define CP0C0_SB   21
 #define CP0C0_MDU  20
 #define CP0C0_MM   17
 #define CP0C0_BM   16
@@ -468,6 +469,7 @@ struct CPUMIPSState {
 #define CP0C5_NFExists   0
     int32_t CP0_Config6;
     int32_t CP0_Config7;
+#define CP0C7_WII        31
     /* XXX: Maybe make LLAddr per-TC? */
     target_ulong lladdr;
     target_ulong llval;
@@ -582,6 +584,21 @@ struct CPUMIPSState {
     const mips_def_t *cpu_model;
     void *irq[8];
     QEMUTimer *timer; /* Internal timer */
+    unsigned count_freq; /* rate of Count register */
+
+    /* Processor state after the last instruction.
+     * Used for instruction tracing. */
+    target_ulong last_gpr[32];
+    target_ulong last_HI[MIPS_DSP_ACC];
+    target_ulong last_LO[MIPS_DSP_ACC];
+    target_ulong last_DSPControl;
+    target_ulong last_cop0[32*8];
+    const char *last_mode;
+
+    /* Fields for external interrupt controller. */
+    void *eic_context;
+    void (*eic_timer_irq)(CPUMIPSState *env, int raise);
+    void (*eic_soft_irq)(CPUMIPSState *env, int num);
 };
 
 #include "cpu-qom.h"
@@ -652,7 +669,9 @@ static inline int cpu_mips_hw_interrupts_pending(CPUMIPSState *env)
     if (env->CP0_Config3 & (1 << CP0C3_VEIC)) {
         /* A MIPS configured with a vectorizing external interrupt controller
            will feed a vector into the Cause pending lines. The core treats
-           the status lines as a vector level, not as indiviual masks.  */
+           the status lines as a vector level, not as individual masks.  */
+        pending >>= CP0Ca_IP + 2;
+        status >>= CP0Ca_IP + 2;
         r = pending > status;
     } else {
         /* A MIPS configured with compatibility or VInt (Vectored Interrupts)
@@ -772,6 +791,7 @@ hwaddr cpu_mips_translate_address (CPUMIPSState *env, target_ulong address,
 		                               int rw);
 #endif
 target_ulong exception_resume_pc (CPUMIPSState *env);
+void mips_dump_changed_state(CPUMIPSState *env);
 
 /* op_helper.c */
 extern unsigned int ieee_rm[];

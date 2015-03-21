@@ -25,21 +25,13 @@
 #include "qemu/timer.h"
 #include "sysemu/kvm.h"
 
-#define TIMER_FREQ	100 * 1000 * 1000
-
-/* XXX: do not use a global */
+/* Generate a random TLB index.
+ * Skip wired entries. */
 uint32_t cpu_mips_get_random (CPUMIPSState *env)
 {
-    static uint32_t lfsr = 1;
-    static uint32_t prev_idx = 0;
-    uint32_t idx;
-    /* Don't return same value twice, so get another value */
-    do {
-        lfsr = (lfsr >> 1) ^ (-(lfsr & 1u) & 0xd0000001u);
-        idx = lfsr % (env->tlb->nb_tlb - env->CP0_Wired) + env->CP0_Wired;
-    } while (idx == prev_idx);
-    prev_idx = idx;
-    return idx;
+    env->CP0_Random = env->CP0_Wired +
+        random() % (env->tlb->nb_tlb - env->CP0_Wired);
+    return env->CP0_Random;
 }
 
 /* MIPS R4K timer */
@@ -50,8 +42,8 @@ static void cpu_mips_timer_update(CPUMIPSState *env)
 
     now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     wait = env->CP0_Compare - env->CP0_Count -
-	    (uint32_t)muldiv64(now, TIMER_FREQ, get_ticks_per_sec());
-    next = now + muldiv64(wait, get_ticks_per_sec(), TIMER_FREQ);
+	    (uint32_t)muldiv64(now, env->count_freq, get_ticks_per_sec());
+    next = now + muldiv64(wait, get_ticks_per_sec(), env->count_freq);
     timer_mod(env->timer, next);
 }
 
@@ -62,7 +54,13 @@ static void cpu_mips_timer_expire(CPUMIPSState *env)
     if (env->insn_flags & ISA_MIPS32R2) {
         env->CP0_Cause |= 1 << CP0Ca_TI;
     }
-    qemu_irq_raise(env->irq[(env->CP0_IntCtl >> CP0IntCtl_IPTI) & 0x7]);
+    if (env->CP0_Config3 & (1 << CP0C3_VEIC)) {
+        /* External interrupt controller mode. */
+        env->eic_timer_irq(env, 1);
+    } else {
+        /* Legacy or vectored interrupt mode. */
+        qemu_irq_raise(env->irq[(env->CP0_IntCtl >> CP0IntCtl_IPTI) & 0x7]);
+    }
 }
 
 uint32_t cpu_mips_get_count (CPUMIPSState *env)
@@ -80,7 +78,7 @@ uint32_t cpu_mips_get_count (CPUMIPSState *env)
         }
 
         return env->CP0_Count +
-            (uint32_t)muldiv64(now, TIMER_FREQ, get_ticks_per_sec());
+            (uint32_t)muldiv64(now, env->count_freq, get_ticks_per_sec());
     }
 }
 
@@ -97,7 +95,7 @@ void cpu_mips_store_count (CPUMIPSState *env, uint32_t count)
         /* Store new count register */
         env->CP0_Count =
             count - (uint32_t)muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-                                       TIMER_FREQ, get_ticks_per_sec());
+                                       env->count_freq, get_ticks_per_sec());
         /* Update timer timer */
         cpu_mips_timer_update(env);
     }
@@ -110,7 +108,14 @@ void cpu_mips_store_compare (CPUMIPSState *env, uint32_t value)
         cpu_mips_timer_update(env);
     if (env->insn_flags & ISA_MIPS32R2)
         env->CP0_Cause &= ~(1 << CP0Ca_TI);
-    qemu_irq_lower(env->irq[(env->CP0_IntCtl >> CP0IntCtl_IPTI) & 0x7]);
+
+    if (env->CP0_Config3 & (1 << CP0C3_VEIC)) {
+        /* External interrupt controller mode: nothing to do. */
+        env->eic_timer_irq(env, 0);
+    } else {
+        /* Legacy or vectored interrupt mode. */
+        qemu_irq_lower(env->irq[(env->CP0_IntCtl >> CP0IntCtl_IPTI) & 0x7]);
+    }
 }
 
 void cpu_mips_start_count(CPUMIPSState *env)
@@ -122,7 +127,7 @@ void cpu_mips_stop_count(CPUMIPSState *env)
 {
     /* Store the current value */
     env->CP0_Count += (uint32_t)muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-                                         TIMER_FREQ, get_ticks_per_sec());
+                                         env->count_freq, get_ticks_per_sec());
 }
 
 static void mips_timer_cb (void *opaque)
@@ -145,7 +150,7 @@ static void mips_timer_cb (void *opaque)
     env->CP0_Count--;
 }
 
-void cpu_mips_clock_init (CPUMIPSState *env)
+void cpu_mips_clock_init (CPUMIPSState *env, unsigned count_freq)
 {
     /*
      * If we're in KVM mode, don't create the periodic timer, that is handled in
@@ -153,5 +158,13 @@ void cpu_mips_clock_init (CPUMIPSState *env)
      */
     if (!kvm_enabled()) {
         env->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, &mips_timer_cb, env);
+        env->count_freq = count_freq;
+
+        if (qemu_loglevel_mask(CPU_LOG_INSTR)) {
+            /* When instruction tracing enabled,
+             * we need to slow down the timer to adapt
+             * to the decreased simulation speed. */
+            env->count_freq /= 10;
+        }
     }
 }
